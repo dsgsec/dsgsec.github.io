@@ -10,7 +10,7 @@ theme: jekyll-theme-chirpy
 # -------------------------
 
 title: DSGSEC
-tagline: Cybersecurity Writeups • Pentest • IoT • Vulnerability Research
+tagline: CTF Writeups • Pentest • Vulnerability Research
 
 description: >-
   Cybersecurity blog covering penetration testing (HackTheBox, CTF),
