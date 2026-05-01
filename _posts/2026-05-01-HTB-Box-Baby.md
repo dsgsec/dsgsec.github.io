@@ -85,10 +85,11 @@ _Liste d'utilisateurs LDAP via netexec_
 Le mot de passe à l'air d'être un mot de passe défini par défaut pour les utilisateurs du domaine.
 
 Nous allons essayer de voir si le compte est valide avec ces identifiants.
-![Connexion en LDAP au compte Teresa.Bell](/assets/img/htb/baby/ldap_teresa_conn.png)
-_Connexion en LDAP au compte Teresa.Bell_
+```bash
+nxc ldap 10.129.234.71 -u 'Teresa.Bell' -p 'BabyStart123!'
+```
 
-La connexion à échoué.
+Mot de passe incorrect.
 
 
 ## Exploitation
