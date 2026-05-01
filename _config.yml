@@ -52,9 +52,7 @@ social_preview_image: /assets/img/og-image.png
 # -------------------------
 
 theme_mode: dark
-
 toc: true
-
 paginate: 8
 
 # -------------------------
@@ -105,19 +103,6 @@ cdn:
 avatar: https://media.licdn.com/dms/image/v2/D4E03AQEzMdK-k_5lAQ/profile-displayphoto-crop_800_800/B4EZ3Ukz7kKcAI-/0/1777387920883?e=1779321600&v=beta&t=0cZYU5fV50FMW7kc-9PXGbDs50Qb_H_QzZhjl6mF3e0
 
 # -------------------------
-# SEO / ARCHIVES
-# -------------------------
-
-jekyll-archives:
-  enabled: [categories, tags]
-  layouts:
-    category: category
-    tag: tag
-  permalinks:
-    tag: /tag/:name/
-    category: /category/:name/
-
-# -------------------------
 # COLLECTIONS
 # -------------------------
 
@@ -153,6 +138,19 @@ defaults:
     values:
       layout: page
       permalink: /:title/
+
+# -------------------------
+# JEKYLL ARCHIVES (FIXED)
+# -------------------------
+
+jekyll-archives:
+  enabled: [categories, tags]
+  layouts:
+    category: category
+    tag: tag
+  permalinks:
+    tag: /tags/:name/
+    category: /categories/:name/
 
 # -------------------------
 # MARKDOWN ENGINE
@@ -199,16 +197,3 @@ exclude:
   - purgecss.js
   - "*.config.js"
   - "package*.json"
-
-# -------------------------
-# JEKYLL ARCHIVES
-# -------------------------
-
-jekyll-archives:
-  enabled: [categories, tags]
-  layouts:
-    category: category
-    tag: tag
-  permalinks:
-    tag: /tag/:name/
-    category: /category/:name/
