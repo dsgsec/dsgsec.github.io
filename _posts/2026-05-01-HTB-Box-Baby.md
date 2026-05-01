@@ -1,8 +1,6 @@
 ---
 title: "HTB Write-up - Baby"
 date: 2026-05-01
-categories: [OFFENSIVE, HTB_Machines]
-tags: [htb, windows, easy, active-directory]
 image:
   path: /assets/img/htb/baby/card_htb_baby.png
 ---
