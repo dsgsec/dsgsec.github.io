@@ -1,6 +1,8 @@
 ---
 title: "HTB Write-up - Baby"
 date: 2026-05-01
+categories: [offensive, htb]
+tags: [hackthebox, windows, easy, active-directory]
 image:
   path: /assets/img/htb/baby/card_htb_baby.png
 ---
