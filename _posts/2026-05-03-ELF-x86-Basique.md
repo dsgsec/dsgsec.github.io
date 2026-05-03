@@ -1,6 +1,6 @@
 ---
 title: "Root-Me Cracking - ELF x86 - Basique"
-date: 2026-05-01
+date: 2026-05-03
 categories: [cracking, rootme]
 tags: [rootme, cracking, reverse, easy, linux]
 image:
