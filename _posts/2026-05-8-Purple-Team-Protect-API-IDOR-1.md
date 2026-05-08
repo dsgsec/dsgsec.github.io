@@ -1,3 +1,13 @@
+---
+title: "Détecter les abus d’API modernes : observabilité et Purple Teaming (1/3)"
+date: 2026-05-08
+categories: [purple, secops]
+tags: [purple-team, secops, docker, api, monitoring]
+image:
+  path: /assets/img/purple-team-crapi-idor/purple_team-card.jpg
+---
+
+
 ## Introduction
 
 Au moment ou je rédige ces lignes nous sommes à quelques semaines depuis la fuite de données qui à touché l’ANTS (France Titre). Pour rappel, les données des utilisateurs de l’ANTS ont été compromises suite à l’exploitation d’une vulnérabilité IDOR. 
