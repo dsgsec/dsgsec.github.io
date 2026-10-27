@@ -4,7 +4,7 @@ date: 2026-10-27
 categories: [offensive, htb]
 tags: [hackthebox, windows, easy, active-directory]
 image:
-  path: /assets/img/htb/fluffy/card_htb_baby.png
+  path: /assets/img/htb/fluffy/card_htb_fluffy.png
 ---
 
 ## Contexte
