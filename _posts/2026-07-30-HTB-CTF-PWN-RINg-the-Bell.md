@@ -76,7 +76,7 @@ _Premier inuput dans le programme_
 
 ### Provoquer un crash
 
-Nous savons que nous sommes sur un challenge de `binary exploitation`, donc par supposition nous nous attendons à une vulnérabilité de type `Buffer Overflow`, nous allons donc essayer d'envoyer dans l'input pour confirmer cela.
+Nous savons que nous sommes sur un challenge de `binary exploitation`, donc par supposition nous nous attendons à une vulnérabilité de type `Buffer Overflow`.
 
 > Pour vérifier si cette vulnérabilité est présente, nous allons donc essayer d'envoyer dans l'input une entrée volontairement beaucoup trop longue par rapport à ce qui est normalement attendu. Si le programme crash (segfault) suite à cet envoi, cela confirme qu'il n'y a pas de contrôle sur la taille de l'entrée, et donc que la vulnérabilité de type Buffer Overflow est bien exploitable.
 
@@ -109,7 +109,7 @@ Et ajouter nos 150 `A`.
 ![Insertion de 150 A dans l'input du programme](/assets/img/htb/ring_the_bell/insert_150_a.png)
 _Insertion de 150 A dans l'input du programme_
 
-Et si nous validons nous pouvons constater que le programme à planté avec l'erreur suivante :
+Et si nous validons nous pouvons constater que le programme à planté avec l'erreur suivante (`segmentation fault`) :
 
 ![Crash du programme](/assets/img/htb/ring_the_bell/first_crash.png)
 _Crash du programmee_
@@ -123,7 +123,7 @@ Avant d'aller plus loin, nous allons essayer de comprendre ce qu'il vient de se 
 
 La stack fonctionne selon le principe LIFO (*Last In, First Out*) : la dernière donnée empilée est la première dépilée. Sur la plupart des architectures (x86, x86_64), elle croît vers les adresses basses : chaque nouvel élément empilé est placé à une adresse inférieure à celle du précédent.
 
-Chaque appel de fonction crée sur la stack un **stack frame** (ou cadre de pile), c'est-à-dire une zone mémoire dédiée à cette fonction, contenant ses variables locales, l'adresse de retour vers l'appelant, et le pointeur de base sauvegardé de la fonction appelante.
+Chaque appel de fonction crée sur la stack un **stack frame**, c'est-à-dire une zone mémoire dédiée à cette fonction, contenant ses variables locales, l'adresse de retour vers l'appelant, et le pointeur de base sauvegardé de la fonction appelante.
 
 Deux registres délimitent ce frame :
 - **RBP (Base Pointer)** : pointe vers le début du frame courant, et sert de référence fixe pour accéder aux variables locales et aux paramètres.
@@ -154,7 +154,7 @@ Ici, la variable `buffer` est stockée dans le stack frame de `vuln()`. Lorsque 
 
 Le problème apparaît lorsque la taille de l'entrée utilisateur dépasse la taille prévue du buffer. Si le programme ne vérifie pas la longueur des données reçues, les octets supplémentaires vont continuer à être écrits en mémoire après la fin du buffer.
 
-Bien que la stack grandisse vers les adresses basses, l'écriture à l'intérieur d'un buffer se fait dans le sens inverse : du début du buffer vers les adresses hautes. Cette différence est essentielle : elle signifie qu'un débordement de buffer ne va pas écraser une zone mémoire arbitraire, mais va spécifiquement écraser, dans l'ordre, le **Saved RBP** puis le **Return Address** — les deux éléments stockés juste au-dessus du buffer dans le stack frame.
+Bien que la stack grandisse vers les adresses basses, l'écriture à l'intérieur d'un buffer se fait dans le sens inverse : du début du buffer vers les adresses hautes. Cette différence est essentielle : elle signifie qu'un débordement de buffer ne va pas écraser une zone mémoire arbitraire, mais va spécifiquement écraser, dans l'ordre, le **Saved RBP** puis le **Return Address**, les deux éléments stockés juste au-dessus du buffer dans le stack frame.
 
 C'est cette caractéristique qui rend le Return Address particulièrement intéressant pour un attaquant : en contrôlant précisément son contenu, il devient possible de rediriger le flux d'exécution du programme vers une adresse arbitraire.
 
@@ -174,7 +174,7 @@ Pour cela, il nous faut d'abord déterminer précisément **à quel octet de not
 
 Pour savoir précisément combien d'octets sont nécessaires pour atteindre puis écraser le Return Address, nous devons connaître l'**offset** exact entre le début de notre `buffer` et le Return Address dans le stack frame.
 
-Une méthode naïve serait d'envoyer une chaîne de "A" et d'augmenter progressivement sa taille jusqu'à voir RIP contenir `0x4141414141414141` — mais ce serait long et peu précis. À la place, nous allons utiliser le script `pattern_create.rb` de Metasploit.
+Une méthode naïve serait d'envoyer une chaîne de "A" et d'augmenter progressivement sa taille jusqu'à voir RIP contenir `0x4141414141414141`, mais ce serait long et peu précis. À la place, nous allons utiliser le script `pattern_create.rb` de Metasploit.
 
 Ce script génère une chaîne de la taille souhaitée, mais contrairement à une chaîne de "A" répétées, chaque **groupe de 4 (ou 8) caractères** de cette chaîne est **unique** dans toute la séquence (par exemple `Aa0Aa1Aa2Aa3...`). Cette propriété est essentielle : là où une chaîne de "A" ne permet pas de savoir *à quelle distance* du début se trouve un "A" donné (ils sont tous identiques), une séquence de caractères unique permet de repérer précisément *où* dans la chaîne se situe une valeur donnée.
 
@@ -182,9 +182,9 @@ Concrètement, le principe se déroule en deux temps :
 
 1. **Génération et envoi du pattern** : on génère une chaîne (par exemple de 150 octets) avec `pattern_create.rb`, et on l'envoie en entrée du programme, exactement comme on l'a fait avec nos 150 "A".
 
-2. **Lecture de la valeur qui écrase RIP** : le programme crash toujours de la même manière, mais cette fois, la valeur qui se retrouve dans le registre RIP (visible dans GDB au moment du crash) n'est plus `0x4141414141414141` — c'est un fragment unique du pattern, par exemple `0x6141396141386141`.
+2. **Lecture de la valeur qui écrase RIP** : le programme crash toujours de la même manière, mais cette fois, la valeur qui se retrouve dans le registre RIP (visible dans GDB au moment du crash) n'est plus `0x4141414141414141` , c'est un fragment unique du pattern, par exemple `0x6141396141386141`.
 
-Comme ce fragment de 8 octets n'apparaît qu'à un seul endroit dans toute la chaîne générée, on peut utiliser le script complémentaire `pattern_offset.rb` (toujours fourni par Metasploit) pour rechercher cette valeur précise dans le pattern d'origine, et obtenir en retour sa position exacte — c'est-à-dire l'offset.
+Comme ce fragment de 8 octets n'apparaît qu'à un seul endroit dans toute la chaîne générée, on peut utiliser le script complémentaire `pattern_offset.rb` (toujours fourni par Metasploit) pour rechercher cette valeur précise dans le pattern d'origine, et obtenir en retour sa position exacte , c'est-à-dire l'offset.
 
 Cet offset correspond donc au nombre exact d'octets à envoyer avant de pouvoir écrire nous-mêmes, librement, la valeur du Return Address.
 
