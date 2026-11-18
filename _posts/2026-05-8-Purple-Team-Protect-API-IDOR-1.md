@@ -1,817 +1,454 @@
 ---
-title: "Détecter les abus d’API modernes : observabilité et Purple Teaming (1/3)"
-date: 2026-05-08
-categories: [purple, secops]
-tags: [purple-team, secops, docker, api, monitoring]
+title: "Application Security Detection & Response 00 : De la conception produit à la détection et à la réponse aux incidents de sécurité applicative"
+date: 2026-11-18
+categories: [purple, devsecops, appsec, detection]
+tags: [purple-team, devsecops, appsec, detection]
 image:
-  path: /assets/img/purple-team-crapi-idor/purple_team-card.jpg
+  path: /assets/img/appsec-dfir/banniere.png
 ---
-
 
 ## Introduction
 
-Au moment ou je rédige ces lignes nous sommes à quelques semaines depuis la fuite de données qui à touché l’ANTS (France Titre). Pour rappel, les données des utilisateurs de l’ANTS ont été compromises suite à l’exploitation d’une vulnérabilité IDOR. 
+Les applications modernes ne sont plus de simples logiciels isolés. Elles reposent désormais sur des écosystèmes interconnectés, composés d’interfaces frontend, d’API, de bases de données, de services d’authentification, d’intégrations externes et d’infrastructures distribuées.
 
-Mais c’est loin d’être un cas isolé, de nombreuses applications ont subis des fuites de données à cause de vulnérabilités IDOR, ce qui en fait un vecteur d’attaque très répandu en ce moment. 
+Cette évolution a considérablement élargi la surface d’attaque que les organisations doivent protéger.
 
-Ces attaques explosent depuis quelques années surtout à cause de la généralisation des APIs, des apps mobiles et des architectures microservices. En 2026, quasiment toutes les applications fonctionnent comme ça.
+En parallèle, les capacités offensives progressent. Les attaquants disposent de méthodes toujours plus efficaces pour identifier des vulnérabilités, automatiser leurs phases de reconnaissance et exploiter les faiblesses des systèmes d’information. L’arrivée de l’intelligence artificielle dans les outils offensifs contribue également à accélérer certaines étapes de ces opérations.
 
-D’ailleurs ce n’est pas pour rien si les vulnérabilités de type ***Broken Access Control*** sont toujours aussi hautes dans les deux derniers tops 10 OWASP !
+Dans ce contexte, sécuriser une application ne peut plus se limiter à mettre en place des contrôles préventifs en espérant qu’ils empêcheront toutes les attaques.
 
-![Top 10 OWASP](/assets/img/purple-team-crapi-idor/top10_owasp.png)
+Il devient également nécessaire de comprendre ce qui se passe au sein des applications, d’identifier les comportements suspects, d’investiguer les événements de sécurité et de réagir efficacement lorsqu’une attaque parvient à contourner les protections existantes.
 
-### Les vulnérabilités IDOR
+C’est précisément cette problématique que nous allons explorer dans cette série : **Application Security Detection & Response**.
 
-Les vulnérabilités de type IDOR (*Insecure Direct Object Reference*), comptent parmi les failles les plus répandues du web contemporain. Elles apparaissent lorsqu'une application expose directement des :
+L’objectif sera de concevoir et de construire un environnement SaaS réaliste, d’en étudier les risques de sécurité, de mettre en place des mécanismes de supervision et de simuler différents scénarios d’attaque afin d’évaluer leur capacité de détection.
 
-- identifiants d'objets
-- comptes
-- documents
-- commandes
-- dossiers
+Il ne s’agira donc pas simplement de déployer une application vulnérable ou d’installer un SIEM. Nous chercherons à comprendre comment la sécurité applicative, la sécurité offensive et la sécurité défensive peuvent fonctionner ensemble tout au long du cycle de vie d’un produit. Vous l’aurez compris, nous allons donc adopter une démarche **Purple Team**.
 
-Sans vérifier correctement que l'utilisateur connecté a réellement le droit d'y accéder.
+![Application Security Detection & Response : une démarche Purple Team](/assets/img/appsec-dfir/image.png)
 
-![Schéma explication IDOR](/assets/img/purple-team-crapi-idor/idor_schema.png)
+## Le contexte cyber en 2026
 
-Concrètement, une application vulnérable peut permettre à un utilisateur de modifier simplement un identifiant dans une URL ou une requête API pour accéder aux données d'un autre compte. Dans de nombreux cas, il ne s'agit pas d'un piratage sophistiqué, mais d'un défaut de contrôle d'accès côté serveur : l'application vérifie que l'utilisateur est authentifié, sans vérifier qu'il est autorisé à consulter la ressource demandée.
+Pour comprendre l’intérêt de cette démarche, il est important de revenir sur plusieurs évolutions qui caractérisent le paysage de la cybersécurité en 2026.
 
-### Détection des IDOR
+Elles mettent notamment en évidence une réalité : les organisations doivent aujourd’hui être capables de prévenir les attaques, mais également de les identifier et d’y répondre.
 
-Les vulnérabilités de type IDOR,désormais souvent classées comme ***Broken Object Level Authorization*** (BOLA) dans les APIs modernes. Sont paradoxalement parmi les failles les plus simples à exploiter et les plus difficiles à détecter. Contrairement aux injections SQL ou aux vulnérabilités XSS, elles ne reposent pas sur une anomalie technique visible, mais sur une erreur de logique métier : le serveur ne vérifie pas correctement qu'un utilisateur a le droit d'accéder à une ressource donnée.
+### Une surface d’attaque applicative de plus en plus étendue
 
-![Meme IDOR](/assets/img/purple-team-crapi-idor/idor_meme.png)
+Les architectures logicielles modernes reposent sur un nombre croissant de composants interconnectés.
 
-Dans une application moderne, chaque objet possède généralement un identifiant exposé via une API : utilisateur, facture, document, commande ou conversation. Lorsqu'un attaquant modifie cet identifiant et que le serveur renvoie malgré tout les données d'un autre utilisateur, la faille devient exploitable. 
+Une application SaaS classique peut notamment exposer :
 
-> **Oui mais avec tous les outils que nous avons aujourd’hui, l’IA etc, nous devrions détecter ces vulnérabilités facilement non ?**
+- Une interface frontend utilisée par les clients.
+- Des API REST ou GraphQL chargées des opérations métier.
+- Des mécanismes d’authentification et de gestion des sessions.
+- Des bases de données contenant des informations sensibles.
+- Des fonctionnalités de stockage et de partage de fichiers.
+- Des intégrations avec des services tiers.
+- Des interfaces d’administration et des services internes.
 
-C’est là que ça se complique ! Pourtant, du point de vue d'un scanner automatisé, la requête semble parfaitement valide : l'utilisateur est authentifié, la réponse est un "200 OK", et aucun comportement anormal n'apparaît techniquement. 
+Chaque composant représente une surface d’attaque potentielle. Mais les risques ne se limitent pas aux vulnérabilités propres à chaque technologie : ils peuvent également apparaître dans les interactions entre ces composants.
 
-Le problème, c’est que ces outils analysent des signaux techniques, pas la logique métier de l’application. Ils ne savent pas si un utilisateur est censé accéder à une ressource précise, ni si une facture, un dossier ou un profil appartient réellement à la personne connectée. Tant que la réponse HTTP est cohérente et que l’application ne renvoie pas d’erreur explicite, la requête est souvent considérée comme “saine”.
+![Architecture d’une application SaaS classique et sa surface d’attaque](/assets/img/appsec-dfir/image%201.png)
 
-C’est ce que nous allons voir dans cet article, comment utiliser des compétences en sécurité offensive (Red Team) pour afiner nos outils de détections (Blue Team) pour sécuriser notre application avec une approche Purple Team !
+**Prenons l’exemple d’une application de gestion documentaire.**
 
-### Observabilité : la pièce manquante dans la détection des IDOR
+Un utilisateur s’authentifie, accède à son espace de travail et demande un document via une API. L’application vérifie sa session et lui retourne la ressource demandée.
 
-Dans les environnements modernes basés sur des API, les vulnérabilités de type IDOR ne posent pas uniquement un problème de sécurité applicative, mais surtout un problème de visibilité.
+En apparence, tout fonctionne normalement.
 
-Les applications génèrent généralement des logs HTTP classiques : requête, endpoint, statut de réponse. Ces informations sont suffisantes pour du debug technique, mais insuffisantes pour comprendre un comportement utilisateur.
+![Flux normal d’accès à un document](/assets/img/appsec-dfir/image%202.png)
 
-Dans le cas d'un abus IDOR, chaque requête prise isolément semble légitime :
+Mais que se passe-t-il si cet utilisateur modifie simplement l’identifiant du document dans sa requête pour accéder à un fichier appartenant à une autre organisation ?
 
-- l'utilisateur est authentifié,
-- la requête est valide,
-- la réponse est cohérente (souvent un code 200).
+L’authentification fonctionne correctement. L’API répond normalement. La requête est techniquement valide.
 
-Rien, à ce niveau, ne permet d'identifier une intention malveillante.
+![Requête avec un identifiant de document modifié](/assets/img/appsec-dfir/image%203.png)
 
-Le problème n'est donc pas l'absence de logs, mais l'absence de contexte.
+Pourtant, l’application vient potentiellement de divulguer une ressource à un utilisateur qui n’a pas le droit d’y accéder.
 
-Nous ne savons pas :
+Le problème ne se situe donc pas nécessairement au niveau du réseau ou de l’authentification, mais dans la logique d’autorisation de l’application.
 
-- si les ressources appartiennent réellement à l'utilisateur,
-- si une séquence d'accès est cohérente avec un usage normal,
-- si plusieurs requêtes forment un pattern d'énumération,
-- ni comment ces actions s'inscrivent dans un parcours utilisateur complet.
+![Contrôles en place et contrôle d’autorisation manquant](/assets/img/appsec-dfir/image%204.png)
 
-C'est précisément ce manque de visibilité que l'observabilité cherche à résoudre.
+Ce type de vulnérabilité, connu sous le nom de **Broken Object Level Authorization (BOLA)**, figure parmi les risques majeurs identifiés par l’**OWASP** dans son classement des risques de sécurité des API.
 
-![Meme Observabilité](/assets/img/purple-team-crapi-idor/observability_meme.png)
+![Broken Object Level Authorization (BOLA)](/assets/img/appsec-dfir/image%205.png)
 
-## Présentation du lab
+Cette catégorie illustre parfaitement une difficulté des architectures modernes : une requête peut être techniquement légitime tout en correspondant à une opération métier non autorisée.
 
-Bon c’est bien beau tout ça, maintenant que nos bases sont posées, le contexte défini, on fait quoi ?Et bien nous allons apprendre à détecter une attaque IDOR sur une application vulnérable. Nous allons donc simuler un scénario d’abus réel et reconstruire progressivement la capacité de détection.
+### L’identité et les autorisations au cœur des attaques
 
-Maintenant que les bases théoriques sont posées, nous allons passer à la mise en pratique.
+Un autre changement important concerne la place de l’identité dans les architectures modernes.
 
-Dans ce lab, nous allons utiliser une application volontairement vulnérable, OWASP crAPI, afin de simuler un scénario réaliste d'abus d'API basé sur une vulnérabilité de type IDOR.
+Les applications s’appuient de plus en plus sur des utilisateurs authentifiés, des comptes de service, des jetons d’accès et des mécanismes de délégation de permissions.
 
-L'objectif n'est pas uniquement d'exploiter la vulnérabilité, mais de comprendre comment ce type d'attaque se manifeste dans un environnement réel, et surtout pourquoi il est difficile de la détecter avec des approches classiques basées uniquement sur des logs applicatifs.
+L’identité constitue ainsi un élément central de la sécurité applicative.
 
-Nous allons donc simuler un scénario d'attaque, analyser les signaux disponibles, puis reconstruire progressivement une capacité de détection en introduisant des mécanismes d'observabilité et de télémétrie.
+Mais une authentification réussie ne garantit pas qu’une action soit légitime.
 
-### OWASP crAPI
+Un attaquant peut exploiter un compte compromis, détourner une session valide ou abuser de permissions trop permissives pour accéder à des ressources auxquelles il ne devrait normalement pas avoir accès.
 
-> crAPI (Completely Ridiculous API), simule une application Web basée sur des microservices pilotée par API qui est une plate-forme pour les propriétaires de véhicules.
-> 
-> 
-> C’est une application intentionnellement vulnérable. Cependant, crAPI est principalement rempli de vulnérabilités d'API dans le but d'enseigner, d'apprendre et de pratiquer la sécurité de l'API.
-> 
+Dans une application multi-tenant, les conséquences peuvent être particulièrement importantes.
 
-![Apercu crAPI](/assets/img/purple-team-crapi-idor/crapi.png)
+Un utilisateur appartenant à une organisation peut, à la suite d’une mauvaise vérification des autorisations, accéder aux données d’une autre organisation.
 
+Ce scénario ne nécessite pas forcément de contourner un mécanisme d’authentification. L’attaquant peut simplement utiliser les fonctionnalités normales de l’application de manière abusive.
 
-C’est donc le support parfait pour simuler une application à attaquer et à sécuriser !
+![Accès inter-organisations dans une application multi-tenant](/assets/img/appsec-dfir/image%206.png)
 
-### Point de départ
+Il devient donc essentiel de surveiller non seulement les échecs d’authentification, mais également les actions réalisées après authentification :
 
-Nous allons partir de littéralement 0, aucune protection, crAPI sera vu comme une application en production fraichement déployé.
+- Accès inhabituels à des ressources.
+- Consultations répétées de documents.
+- Modifications de permissions.
+- Création de liens de partage inattendus.
+- Tentatives d’accès à des ressources appartenant à d’autres utilisateurs.
+- Modifications inhabituelles des paramètres d’un compte ou d’une organisation.
 
-> Nous allons bien-sûr installer l’application ensemble dans cet article afin que les personnes voulant reproduire les actions chez elles puissent le faire dans les meilleurs conditions !
-> 
+La sécurité ne doit donc pas uniquement s’intéresser à l’identité de l’utilisateur, mais également à ce qu’il fait avec les permissions dont il dispose.
 
-Une fois l’application installé, nous allons réaliser les phases d’attaques classiques :
+### Le problème de la visibilité sur les comportements applicatifs
 
-- Reconnaissance
-- Identification de la faille
-- Exploitation
-- Extraction des données
+Ces évolutions soulèvent une autre problématique : la visibilité.
 
-Une fois l’attaque réalisé, nous allons nous mettre dans la peau des équipes de défense et voir ce que nous avons pu en tirer ! Avons-nous vu quelque chose ? Quoi ? Pourquoi ? Avons-nous réussi à stopper l’attaque ? Pourquoi ? 
+Les infrastructures disposent généralement de plusieurs sources de journalisation :
 
-![Schéma Lab](/assets/img/purple-team-crapi-idor/tp_schema.png)
+- Journaux réseau et pare-feu.
+- Journaux du reverse proxy.
+- Journaux du WAF.
+- Journaux des serveurs et conteneurs.
+- Journaux d’authentification.
+- Journaux des applications.
+- Journaux des bases de données.
 
-Et toutes autres question qui empêche nos amis de la Blue Team de dormir la nuit
+Ces sources sont indispensables pour comprendre ce qui se passe dans un environnement.
 
-![alt text](/assets/img/purple-team-crapi-idor/cyberrisk_meme.png)
+Cependant, elles ne fournissent pas toutes le même niveau de contexte.
 
-## Installation de crAPI
+**Prenons un exemple :**
 
-Nous allons déployer crAPI via Docker, ca sera beaucoup plus simple pour nous ! Donc assurez-vous juste d’avoir Docker d’installer sur votre machine avant d’aller plus loin.
+> Un utilisateur authentifié consulte un document appartenant à une autre organisation à la suite d’une mauvaise vérification des autorisations.
 
-- https://www.docker.com/get-started/
+1. Du point de vue du `reverse proxy`, il peut simplement s’agir d’une requête HTTP réussie !
+2. Du point de vue du `WAF`, la requête peut ne contenir aucun élément correspondant à une signature d’attaque connue.
+3. Du point de vue de l’`application`, en revanche, il s’agit d’un accès non autorisé à une ressource sensible.
 
-Vous pouvez retrouver les sources de crAPI directement sur Github
+C’est toute la différence entre observer une requête HTTP et comprendre une action métier.
 
-- https://github.com/OWASP/crAPI
+![La même requête vue par le reverse proxy, le WAF et l’application](/assets/img/appsec-dfir/image%207.png)
 
-Vous aurez juste à cloner le repo sur votre machine
+Pour détecter efficacement ce type de comportement, il faut donc disposer de journaux applicatifs suffisamment riches pour comprendre le contexte de l’opération :
 
-```bash
-$ git clone https://github.com/OWASP/crAPI
-Cloning into 'crAPI'...
-remote: Enumerating objects: 7153, done.
-remote: Counting objects: 100% (132/132), done.
-remote: Compressing objects: 100% (84/84), done.
-remote: Total 7153 (delta 82), reused 48 (delta 48), pack-reused 7021 (from 2)
-Receiving objects: 100% (7153/7153), 8.63 MiB | 21.04 MiB/s, done.
-Resolving deltas: 100% (3901/3901), done.
-```
+- Quel utilisateur a effectué l’action ?
+- À quelle organisation appartient-il ?
+- Quelle ressource a été consultée ?
+- À quelle organisation appartient cette ressource ?
+- Quelle opération a été réalisée ?
+- L’autorisation a-t-elle été accordée ou refusée ?
 
-Puis à vous rendre dans `crAPI/deploy/docker`
+Sans ces informations, les équipes de sécurité peuvent disposer de nombreux événements techniques sans pour autant avoir suffisamment de contexte pour identifier une activité malveillante.
 
-```bash
-cd crAPI/deploy/docker
-```
+![Journal technique et journal applicatif enrichi](/assets/img/appsec-dfir/image%208.png)
 
-Avant de lancer l’application nous allons modifier le fichier .`env` situé dans ce dossier et remplacer la valeur suivante :
+> **Oui, mais avec tous les outils que nous avons aujourd’hui, l’IA, etc., nous devrions détecter ces vulnérabilités facilement, non ?**
 
-```bash
-LISTEN_IP="127.0.0.1"
-```
+C’est là que ça se complique ! En effet, du point de vue d’un scanner automatisé, la requête semble parfaitement valide : l’utilisateur est authentifié, la réponse est un « 200 OK », et aucun comportement anormal n’apparaît techniquement.
 
-Par :
+Le problème, c’est que ces outils analysent des signaux techniques, pas la logique métier de l’application. Ils ne savent pas si un utilisateur est censé accéder à une ressource précise, ni si une facture, un dossier ou un profil appartient réellement à la personne connectée. Tant que la réponse HTTP est cohérente et que l’application ne renvoie pas d’erreur explicite, la requête est souvent considérée comme « saine ».
 
-```bash
-LISTEN_IP="0.0.0.0"
-```
+![Ce que mesure un scanner automatisé et ce qu’il ne peut pas mesurer](/assets/img/appsec-dfir/image%209.png)
 
-Cela nous permettra d’accéder à l’application en dehors de `127.0.0.1`.
+## Au-delà de la prévention : pourquoi la détection est essentielle
 
-Puis lancer notre application via `docker compose` :
+La prévention reste évidemment indispensable.
 
-```bash
-$ docker-compose up -d
-[+] up 118/118
- ✔ Image mongo:4.4                       Pulled                                                                                                                                                                                         39.7s
- ✔ Image postgres:14                     Pulled                                                                                                                                                                                         37.2s
- ✔ Image crapi/crapi-identity:latest     Pulled                                                                                                                                                                                         45.5s
- ✔ Image crapi/mailhog:latest            Pulled                                                                                                                                                                                         11.6s
- ✔ Image crapi/crapi-web:latest          Pulled
- <SNIP>
-```
+Les contrôles d’accès, la validation des entrées, la gestion des sessions, le chiffrement, la segmentation réseau et les mécanismes de protection comme les WAF constituent des éléments fondamentaux de la sécurité d’une application. Mais aucun dispositif préventif ne peut garantir à lui seul l’absence de compromission.
 
-Une fois l’installation terminé vous devriez pouvoir accéder à `crAPI` via votre navigateur sur le port `8888`!
+Une vulnérabilité inconnue, une erreur de configuration, un compte compromis ou une logique métier insuffisamment protégée peuvent permettre à un attaquant de contourner les protections existantes.
 
-![Login crAPI](/assets/img/purple-team-crapi-idor/crapi_login.png)
+C’est pourquoi la sécurité doit également intégrer une capacité de détection et de réponse.
 
+Il ne suffit pas de savoir qu’une requête a été reçue ou qu’une erreur HTTP a été générée. Il faut pouvoir identifier les comportements anormaux, les replacer dans leur contexte et déterminer s’ils représentent une menace réelle.
 
-## Découverte de crAPI
+Cette approche implique de travailler sur plusieurs dimensions complémentaires :
 
-En explorant la barre de navigation nous pouvons déjà constater que nous pouvons nous `connecter` mais aussi `créer un compte`, ce que nous allons faire de ce pas afin d’accéder au reste de l’application.
+### La journalisation applicative
 
-Nous pouvons accéder au formulaire de création de compte sur : http://127.0.0.1:8888/signup
+L’application doit produire des événements de sécurité exploitables, contenant les informations nécessaires à la compréhension des opérations sensibles.
 
-![Création de compte](/assets/img/purple-team-crapi-idor/crapi_register.png)
+### La détection
 
-Nous pouvons désormais nous connecter pour accéder à crAPI !
+Les événements doivent pouvoir être analysés afin d’identifier des comportements suspects ou des violations de règles de sécurité.
 
-![Index crAPI](/assets/img/purple-team-crapi-idor/crapi_index.png)
+### L’investigation
 
-Et nous pouvons même explorer la boutique pour acheter des pièce de voiture sur `/shop`
+Les analystes doivent être capables de reconstituer une séquence d’événements, comprendre les actions réalisées et évaluer leur impact.
 
-![crAPI Shop](/assets/img/purple-team-crapi-idor/crapi_shop.png)
+### La réponse
 
-## Découverte d’une vulnérabilité IDOR
+Lorsqu’un incident est confirmé, des actions adaptées doivent permettre de limiter les conséquences et de corriger les faiblesses exploitées.
 
-### Achat de pièces
+La question n’est donc plus uniquement :
 
-Si nous regardons de plus près le shop, il est possible d’`acheter` des pièces.
+> *Comment empêcher un attaquant de compromettre notre application ?*
 
-Par exemple achetons une roue (`Wheel`), en cliquant sur le bouton `Buy` du produit.
+Elle devient également :
 
-Et nous avons bien la validation comme quoi nous avons acheter notre produit !
+> *Si un attaquant parvient à contourner nos protections, serons-nous capables de comprendre ce qu’il a fait, de le détecter et de réagir ?*
 
-![Order success](/assets/img/purple-team-crapi-idor/order_success.png)
+## Pourquoi une approche Purple Team ?
 
-### Order details
+La Purple Team cherche à rapprocher les activités offensives et défensives.
 
-Une fois l’achat validé nous pouvons accéder au détail de notre commande
+Traditionnellement, les équipes `Red Team` cherchent à identifier et exploiter les faiblesses d’un environnement, tandis que les équipes `Blue Team` travaillent sur sa protection, sa supervision et sa défense.
 
-![Bouton d'accès détail de la commande](/assets/img/purple-team-crapi-idor/crapi_order_detail_button.png)
+L’approche `Purple Team` permet de faire travailler ces deux dimensions ensemble.
 
-Cela nous redirige vers l’url :
+L’objectif n’est pas simplement de réaliser une attaque puis de vérifier si une alerte apparaît.
 
-- http://127.0.0.1:8888/orders?order_id=x
+Il s’agit de construire une démarche d’amélioration continue :
 
-Ou `X` est l’id de notre commande. Par exemple dans notre cas il s’agit de la commande numéro `7` !
+1. Identifier un risque de sécurité.
+2. Définir un scénario d’attaque réaliste.
+3. Comprendre les événements générés par ce scénario.
+4. Vérifier si les données nécessaires à sa détection sont disponibles.
+5. Développer ou améliorer une règle de détection.
+6. Rejouer le scénario pour valider son efficacité.
+7. Analyser les résultats et identifier les éventuelles lacunes.
 
-![Détail de la commande](/assets/img/purple-team-crapi-idor/order_detail.png)
+Cette méthode permet de faire le lien entre les vulnérabilités identifiées lors des activités offensives et les capacités de détection réellement disponibles.
 
-Vous voyez ou je veux en venir ? Effectivement il est très facile de deviner les id des commandes, ceux-ci on l’air de partir de 0 et de s’incrémenter séquentiellement : 
+![Démarche Purple Team d’amélioration continue en sept étapes](/assets/img/appsec-dfir/image%2010.png)
 
-- 0
-- 1
-- 2
-- 3
-- 4
-- etc
+Par exemple, lorsqu’un `pentest` met en évidence une vulnérabilité de type `BOLA`, le travail ne doit pas nécessairement s’arrêter à la correction du contrôle d’accès.
 
-Il est donc facile de faire un script qui va créer une liste partant de 0 et allant à 10 000 par exemple et qui va relever les ID existants pour en extraire les données !
+Il est également intéressant de se demander :
 
-### Découverte de l’API
+- L’application journalise-t-elle les tentatives d’accès non autorisées ?
+- Les événements contiennent-ils l’identité de l’utilisateur et celle de la ressource ciblée ?
+- Peut-on identifier plusieurs tentatives d’accès à des documents appartenant à différents utilisateurs ?
+- Une règle de détection permet-elle de repérer ce comportement ?
+- Les équipes disposent-elles des informations nécessaires pour investiguer l’incident ?
 
-Par ailleurs, si nous ouvrons l’onglet `Network` (`Réseau`) de notre navigateur avec la fonction `Inspecter l’élément` et que nous rechargeons notre page, nous pouvons constater les différentes ressources appelés par notre page
+C’est cette articulation entre `offensive security`, `instrumentation applicative` et `detection engineering` qui constitue le cœur de notre démarche.
 
+## Présentation du projet : construire notre propre environnement SaaS
 
-Chose intéressante, notre page contacte une `API`, qui permet de renvoyer les données à afficher sur notre page
+Pour mettre cette approche en pratique, nous allons développer notre propre application : **DocuVault**.
 
-![Détail appel réseau](/assets/img/purple-team-crapi-idor/crapi_api.png)
+`DocuVault` sera une plateforme fictive de gestion documentaire destinée aux entreprises.
 
-Cela nous permets de savoir que la page interroge l’`API crAPI` via 
+Elle permettra à plusieurs organisations de gérer leurs utilisateurs, leurs documents et leurs espaces de travail depuis une interface centralisée.
 
-- `http://127.0.0.1:8888/workshop/api/shop/orders/<id>`
+Le choix de cette application n’est pas anodin.
 
-Afin de récupérer les données de la commande ciblé par le paramètre `id`, et de l’afficher sur notre page !
+Une plateforme `multi-tenant` regroupe plusieurs problématiques intéressantes en matière de sécurité applicative :
 
-Donc que se passe t’il si nous changeons le paramètre `id` par un autre ?
+- L’authentification.
+- La gestion des permissions.
+- L’isolation des données.
+- Le contrôle d’accès aux ressources.
+- La logique métier.
 
-### Exploitation
+Nous disposerons ainsi d’un environnement suffisamment réaliste pour étudier différents scénarios d’attaque.
 
-Pour faire ça proprement nous allons utiliser `Burpsuite`, notre intercepteur de requête HTTP préféré !
+Les principales fonctionnalités prévues seront :
 
-> Nous allons changer l’url pour naviguer sur crAPI dans notre url, car actuellement nous étions sur `127.0.0.1`, et `burp` n’intercepte aucune requête provenant de `127.0.0.1` ou `localhost`. Nous allons donc utilisé l’adresse IP de notre poste. 
+| Fonctionnalité | Description |
+| --- | --- |
+| Authentication | Connexion, sessions et gestion des comptes |
+| Organizations | Gestion des organisations et espaces de travail |
+| User Management | Invitations, rôles et permissions |
+| Document Management | Création, consultation, modification et suppression |
+| Document Sharing | Partage de documents entre utilisateurs |
+| File Upload | Téléversement et téléchargement de fichiers |
+| Activity History | Historique des actions réalisées sur la plateforme |
 
-![Changement adresse IP](/assets/img/purple-team-crapi-idor/change_ip.png)
+Ces fonctionnalités permettront notamment de travailler sur les scénarios suivants :
 
-#### Interception dans Burpsuite
+- Broken Object Level Authorization (BOLA).
+- Accès inter-tenant non autorisé.
+- Élévation de privilèges.
+- Énumération de comptes.
+- Brute force et abus des mécanismes d’authentification.
+- Abus des fonctionnalités de partage.
+- Téléversement de fichiers malveillants.
+- Abus des API et de la logique métier.
 
-Burp lancé et configuré, nous allons recharger notre page pour intercepter la requête pour `/orders?order_id=7`
+L’application constituera à la fois notre cible pour les exercices offensifs et une source centrale de télémétrie pour les activités défensives.
 
-Une fois la page rechargée, nous voyons bien notre requête intercepté dans `burpsuite` !
+L’objectif sera de concevoir progressivement une application qui ne soit pas seulement testable du point de vue offensif, mais également suffisamment instrumentée pour permettre une supervision et une investigation pertinentes.
 
-![Interception dans burp](/assets/img/purple-team-crapi-idor/burp_intercept.png)
+## Architecture et technologies
 
-Nous allons cliquer sur `Forward` pour la laisser passer.
+L’environnement reposera sur une architecture conteneurisée avec `Docker Compose`.
 
-Et là nous pouvons voir que la prochaine requête est celle qui va récupérer les données de notre commande via l’API ! 
+Nous allons volontairement conserver une architecture relativement simple pour nous concentrer sur les problématiques de sécurité applicative et de détection, plutôt que sur la complexité de l’infrastructure.
 
-![Interception request API dans burp](/assets/img/purple-team-crapi-idor/burp_intercept_api.png)
+La stack technique envisagée sera la suivante :
 
-Nous allons l’envoyer dans notre Repeater pour la manipuler à souhait et jouer avec !
+| Composant | Technologie | Rôle |
+| --- | --- | --- |
+| Frontend | React | Interface utilisateur |
+| Backend | Python / FastAPI | API et logique métier |
+| Database | PostgreSQL | Stockage des données |
+| Reverse Proxy | Nginx | Point d’entrée de l’application |
+| WAF | ModSecurity v3 + OWASP CRS | Protection des requêtes HTTP |
+| SIEM | Wazuh | Centralisation, analyse et détection |
+| Containerization | Docker Compose | Déploiement de l’environnement |
 
-> Pour cela on peut faire `CTRL + R` ou `Clique Droit > Send to repeater`
-> 
+## Méthodologie : du Threat Modeling à la Detection & Response
 
-Nous pouvons désormais la manipuler à volonté !
+Le projet suivra une progression structurée afin de conserver une cohérence entre les risques identifiés, les contrôles implémentés et les mécanismes de détection développés.
 
-![Passage de la requête dans repeater](/assets/img/purple-team-crapi-idor/burp_repeater.png)
+Nous allons organiser le travail autour de six grandes étapes.
 
-Appuyons sur `send` pour observer la réponse de notre requête !
+![Méthodologie en six phases, du Threat Modeling à la Detection & Response](/assets/img/appsec-dfir/image%2011.png)
 
-Effectivement nous avons bien les données de notre commande :
+### Phase 1 : Design du produit & architecture
 
-- L’utilisateur qui passe commande
-    - Ses coordonnées
-- Le produit
-    - Les données du produits
-- La quantité
-- Status de la commande
-- etc
+Avant de développer l’application, nous définirons son fonctionnement.
 
-![Lancement de la requête dans repeater](/assets/img/purple-team-crapi-idor/burp_repeater_run.png)
+Nous identifierons les utilisateurs, les rôles, les fonctionnalités, les parcours critiques et les données manipulées.
 
-> **Si je change l’ID de la commande (7) par un autre, comme 1, l’application devrait vérifier côté serveur que cette commande appartient bien à l’utilisateur connecté ([damien@crapi.com](mailto:damien@crapi.com)) et refuser l’accès si ce n’est pas le cas ?**
-> 
+L’objectif sera de comprendre le produit avant de chercher à en identifier les vulnérabilités.
 
-En principe, si c’est sécurisé : **OUI**
+### Phase 2 : Threat Modeling & Risk Assessment
 
-Essayons ! Dans notre URL modifions 7 par 1 par exemple et observons le résultat
+Nous réaliserons ensuite une analyse des risques à partir de l’architecture et des fonctionnalités définies.
 
-![Modification de l'id](/assets/img/purple-team-crapi-idor/burp_change_idor.png)
+Cette étape comprendra notamment :
 
-Aïe ! On a accès au détail de la commande d’un autre utilisateur, donc accès à des données auxquelles on ne devrait pas avoir accès…
+- L’identification des actifs sensibles.
+- La réalisation de diagrammes de flux de données (`DFD`).
+- L’identification des frontières de confiance.
+- L’analyse des menaces avec la méthode `STRIDE`.
+- La définition de scénarios d’abus.
+- La priorisation des risques.
 
-Voilà comment fonctionne une IDOR.
+Nous disposerons ainsi d’une vision structurée des menaces susceptibles d’affecter DocuVault.
 
-## Exploitation massive d’une vulnérabilité IDOR
+### Phase 3 : Stratégie de monitoring
 
-Nous avons vu comment exploiter une `IDOR` pour passer des détails d’une commande d’un utilisateur à un autre. 
+Une fois les risques identifiés, nous déterminerons comment les **détecter**.
 
-Nous allons maintenant aller plus loin en automatisant ce processus. L’objectif est de parcourir une plage d’identifiants afin d’identifier ceux qui sont valides, et d’observer si l’application retourne effectivement des données associées à ces ressources.
+Pour chaque scénario important, nous définirons les événements nécessaires à son identification, les sources de données concernées et les informations qui devront être journalisées.
 
-Pour cela nous allons utiliser la fonction `intruder` de `Burpsuite` pour envoyer des requêtes massives en changeant l’`id` dans l’url entre chaque requêtes.
+Nous construirons notamment une matrice de couverture reliant :
 
-> Pour cela on peut faire `CTRL + I` ou `Clique Droit > Send to intruder`
-> 
+- Les menaces identifiées.
+- Les scénarios d’attaque.
+- Les événements de sécurité attendus.
+- Les sources de télémétrie.
+- Les règles de détection envisagées.
 
-### Configuration intruder
+Cette étape permettra d’intégrer les besoins de supervision dès la conception de l’application.
 
-Nous allons surligner l’`id` dans notre URL et appuyer sur `Add §` pour spécifier quelle valeur doit être modifiée entre chaque requête.
+![Exemple de chaîne de couverture, de la menace à la règle de détection](/assets/img/appsec-dfir/image%2012.png)
 
-![Burp intruder](/assets/img/purple-team-crapi-idor/burp_intruder.png)
+### Phase 4 : Application Development & Instrumentation
 
-Nous allons maintenant configurer nos `payloads`, c’est ici que nous allons dire par quoi remplacer le chiffre `7` dans notre url.
+Nous développerons DocuVault avec React, FastAPI et PostgreSQL.
 
-Dans le volet de droite nous allons définir :
+Au-delà des fonctionnalités métier, une attention particulière sera portée à la sécurité applicative :
 
-- Payload Type : Numbers
-- From : 1
-- To :  100
+- Authentification et gestion des sessions.
+- Contrôle d’accès et RBAC.
+- Isolation des organisations.
+- Validation des entrées.
+- Protection des API.
+- Gestion sécurisée des fichiers.
+- Journalisation des événements sensibles.
 
-![Burp intruder payload](/assets/img/purple-team-crapi-idor/burp_intruder_payload.png)
+L’application sera également instrumentée pour produire des événements structurés exploitables par notre infrastructure de supervision.
 
-Grâce à cette configuration nous allons tester les ID de manière automatisée de l’ID 1 à 100 !
+### Phase 5 : Security Infrastructure & Detection Engineering
 
-### Lancement de l’attaque
+Nous mettrons ensuite en place notre environnement défensif.
 
-Pour lancer notre attaque nous avons juste à cliquer sur le bouton `Start Attack`.
+Cette phase comprendra le déploiement de Nginx, ModSecurity, OWASP CRS et Wazuh, ainsi que la configuration de la collecte des journaux.
 
-Lors de l’attaque le code HTTP de réponse est extrêmement pertinent car si le code de retour est :
+Nous travaillerons notamment sur :
 
-- 200 : Alors nous avons accès au détail de la commande de l’ID associé
-- 500 : Aucun détail de disponible
+- La centralisation des événements.
+- L’analyse des journaux applicatifs.
+- La création de décodeurs personnalisés si nécessaire.
+- Le développement de règles de détection.
+- La corrélation des événements.
+- La réduction des faux positifs.
 
-Par exemple ici, nous savons que nous pouvons récupérer les détails des commandes des ID 1 à 9
+L’objectif sera de transformer les événements produits par l’application en informations réellement exploitables par une équipe de sécurité.
 
-![Burp code HTTP](/assets/img/purple-team-crapi-idor/burp_code_http.png)
+### Phase 6 : Purple Team Exercises & Incident Response
 
-![Détail d'une autre commande dans intruder](/assets/img/purple-team-crapi-idor/detail_intruder.png)
+Enfin, nous passerons à la validation opérationnelle.
 
-Et voilà nous avons exploité notre IDOR et extrait massivement les données des commandes des utilisateurs de crAPI !
+Nous reproduirons les scénarios d’attaque définis lors du `Threat Modeling` afin d’évaluer les capacités de détection de notre environnement.
 
-Bon, et côté défense, qu’avons nous ?
+Pour chaque exercice, nous chercherons à répondre à plusieurs questions :
 
-## Blue-Team : intervention !
+- L’attaque a-t-elle été correctement exécutée ?
+- Quels événements ont été générés ?
+- Les informations nécessaires étaient-elles disponibles ?
+- Une alerte a-t-elle été déclenchée ?
+- La détection était-elle suffisamment précise ?
+- Comment reconstituer la séquence d’attaque ?
+- Quelles actions de réponse peuvent être mises en place ?
 
-Comme vous le savez, actuellement notre application est déployé avec le strict minium, et il en va de même pour notre infrastructure : 
+Chaque exercice permettra d’identifier les lacunes éventuelles et d’améliorer progressivement les capacités de détection et de réponse.
 
-- Pas de SIEM
-- Pas de monitoring
-- Pas de puit de log
-- Pas de dashboard
+## Périmètre et objectifs du laboratoire
 
-Donc si aujourd’hui nous subissons l’attaque que nous avons réalisée au-dessus, nous ne sommes pas en capacité de la détecter (ce qui est déjà très problématique), de réagir, et réaliser des investigations.
+Ce projet sera développé dans un environnement local et isolé.
 
-### Investigation
+Il utilisera exclusivement des données fictives et ne sera pas destiné à héberger de véritables utilisateurs ou informations sensibles.
 
-Alors partons du principe que nous avons été victime de cette attaque et que nos données ont fuitées (aïe) !
+Le périmètre initial sera volontairement limité :
 
-Nous devons alors investiguer sur la compromission pour savoir :
+- Environnement local basé sur Docker Compose.
+- Application SaaS développée pour le laboratoire.
+- Infrastructure de supervision dédiée.
+- Scénarios d’attaque contrôlés.
+- Pas d’exposition publique volontaire de l’application.
+- Pas de données réelles.
+- Pas de mécanisme de blocage automatique sur le système hôte.
 
-- Quand à eu lieu l’incident
-- Comment ?
-- Qui ?
-- Où ?
+Nous privilégierons dans un premier temps la compréhension des mécanismes de sécurité, la qualité de la télémétrie et la validation des détections.
 
-Pour cela allons interroger les logs !
+L’intégration éventuelle de technologies supplémentaires, notamment Kubernetes ou des services cloud, pourra être envisagée dans une évolution ultérieure du laboratoire.
 
- 
+À terme, le projet devra produire plusieurs livrables concrets :
 
-### Accesslogs nginx
+- Documentation fonctionnelle et technique de DocuVault.
+- Diagrammes d’architecture et de flux de données.
+- Analyse de risques et Threat Model.
+- Matrice de couverture des menaces.
+- Code source de l’application.
+- Configuration de l’infrastructure de sécurité.
+- Règles de détection personnalisées.
+- Scénarios d’attaque documentés.
+- Rapports d’investigation et procédures de réponse.
+- Éléments de validation démontrant l’efficacité des détections.
 
-On va commencer simple. Si nous allons voir les `access log` de notre service web `Nginx` ?
+## Conclusion
 
-Pour ça nous pouvons faire un `docker logs` sur notre container web pour afficher les logs `nginx` !
+La sécurité d’une application ne se résume pas à l’absence de vulnérabilités.
 
-```bash
-docker logs crapi-web
-```
+Même avec des contrôles préventifs solides, une organisation doit être capable de comprendre les comportements qui se produisent dans ses applications, d’identifier les activités suspectes et de réagir lorsqu’un incident survient.
 
-Nous pouvons voir les requêtes exécutées lors de notre attaque !
+C’est précisément ce que nous allons explorer à travers cette série d’articles.
 
-![Logs nginx](/assets/img/purple-team-crapi-idor/http_logs.png)
+En partant de la conception d’un produit fictif, nous allons progressivement construire une démarche complète reliant le `Threat Modeling`, la sécurité applicative, la journalisation, la détection et la réponse à incident.
 
-Nous pouvons voir que :
+L’objectif final est de démontrer qu’une application peut être pensée non seulement pour résister aux attaques, mais également pour fournir les informations nécessaires à leur détection et à leur investigation.
 
-- Les ID de `1 à 9` sont en code `HTTP 200 OK`
-- Les ID `après 9` sont en erreurs : `HTTP 500 SERVER ERROR`
+> **La sécurité ne consiste pas uniquement à empêcher une attaque. Elle consiste aussi à être capable de comprendre ce qui s’est passé lorsqu’une protection échoue.**
 
-Grâce à ces logs nous savons :
+## What’s Next?
 
-- Quels détails de commandes ont été consultés, donc potentiellement exfiltrés ?
-- À quel moment ?
-- Et depuis quelle adresse IP ?
+Nous commencerons par définir précisément notre application.
 
-En revanche, il a fallu attendre que nous soyons informés de la fuite pour lancer l’investigation. De plus, nous ne savons pas depuis quel compte de l’application l’attaque a été réalisée (oui c’est terrible en effet).
+Nous détaillerons son contexte métier, ses utilisateurs, ses rôles, ses fonctionnalités, ses parcours critiques et les données qu’elle manipule.
 
-![Bob meme](/assets/img/purple-team-crapi-idor/bob_meme.png)
-
-Par ailleurs, nous pouvons également noter que l’adresse IP source n’est pas nécessairement fiable, car l’attaquant peut utiliser des proxys ou des techniques de rotation d’IP, par exemple en changeant d’adresse toutes les quelques requêtes.
-
-On va remédier à tout ça, en intégrant de observabilité dans notre stack !
-
-## Modification du docker-compose.yml
-
-Avant de continuer nous allons modifier notre `docker-compose.yml`.
-
-Pourquoi ? Car actuellement, ce dernier va chercher les images `crAPI` dans Docker Hub, donc si nous voulons faire des modifications dans le code source de notre application, ces dernières ne seront pas prises en compte car les images ne seront pas construite à partir de nos sources.
-
-Pour cela, modifier `crAPI/deploy/docker/docker-compose.yml` par ce dernier
-
-```yaml
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#         http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-services:
-
-  crapi-identity:
-    container_name: crapi-identity
-    image: crapi/crapi-identity:${VERSION:-latest}
-    volumes:
-      - ./keys:/app/keys
-    environment:
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DB_NAME=crapi
-      - DB_USER=admin
-      - DB_PASSWORD=crapisecretpassword
-      - DB_HOST=postgresdb
-      - DB_PORT=5432
-      - SERVER_PORT=${IDENTITY_SERVER_PORT:-8080}
-      - ENABLE_SHELL_INJECTION=${ENABLE_SHELL_INJECTION:-false}
-      - JWT_SECRET=crapi
-      - MAILHOG_HOST=mailhog
-      - MAILHOG_PORT=1025
-      - MAILHOG_DOMAIN=example.com
-      - SMTP_HOST=smtp.example.com
-      - SMTP_PORT=587
-      - SMTP_EMAIL=user@example.com
-      - SMTP_PASS=xxxxxxxxxxxxxx
-      - SMTP_FROM=no-reply@example.com
-      - SMTP_AUTH=true
-      - SMTP_STARTTLS=true
-      - JWT_EXPIRATION=604800000
-      - ENABLE_LOG4J=${ENABLE_LOG4J:-false}
-      - API_GATEWAY_URL=https://api.mypremiumdealership.com
-      - TLS_ENABLED=${TLS_ENABLED:-false}
-      - TLS_KEYSTORE_TYPE=PKCS12
-      - TLS_KEYSTORE=classpath:certs/server.p12
-      - TLS_KEYSTORE_PASSWORD=passw0rd
-      - TLS_KEY_PASSWORD=passw0rd
-      - TLS_KEY_ALIAS=identity
-    depends_on:
-      postgresdb:
-        condition: service_healthy
-      mongodb:
-        condition: service_healthy
-      mailhog:
-        condition: service_healthy
-    healthcheck:
-      test: /app/health.sh
-      interval: 15s
-      timeout: 15s
-      retries: 15
-    deploy:
-      resources:
-        limits:
-          cpus: '0.8'
-          memory: 384M
-
-  crapi-community:
-    container_name: crapi-community
-    build:
-      context: ../../services/community
-      dockerfile: Dockerfile
-    image: crapi/crapi-community:local
-    environment:
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - IDENTITY_SERVICE=crapi-identity:${IDENTITY_SERVER_PORT:-8080}
-      - DB_NAME=crapi
-      - DB_USER=admin
-      - DB_PASSWORD=crapisecretpassword
-      - DB_HOST=postgresdb
-      - DB_PORT=5432
-      - SERVER_PORT=${COMMUNITY_SERVER_PORT:-8087}
-      - MONGO_DB_HOST=mongodb
-      - MONGO_DB_PORT=27017
-      - MONGO_DB_USER=admin
-      - MONGO_DB_PASSWORD=crapisecretpassword
-      - MONGO_DB_NAME=crapi
-      - TLS_ENABLED=${TLS_ENABLED:-false}
-      - TLS_CERTIFICATE=certs/server.crt
-      - TLS_KEY=certs/server.key
-    depends_on:
-      postgresdb:
-        condition: service_healthy
-      mongodb:
-        condition: service_healthy
-      crapi-identity:
-        condition: service_healthy
-    healthcheck:
-      test: /app/health.sh
-      interval: 15s
-      timeout: 15s
-      retries: 15
-    deploy:
-      resources:
-        limits:
-          cpus: '0.3'
-          memory: 192M
-
-  crapi-workshop:
-    container_name: crapi-workshop
-    build:
-      context: ../../services/workshop
-      dockerfile: Dockerfile
-    image: crapi/crapi-workshop:local
-    environment:
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - IDENTITY_SERVICE=crapi-identity:${IDENTITY_SERVER_PORT:-8080}
-      - DB_NAME=crapi
-      - DB_USER=admin
-      - DB_PASSWORD=crapisecretpassword
-      - DB_HOST=postgresdb
-      - DB_PORT=5432
-      - SERVER_PORT=${WORKSHOP_SERVER_PORT:-8000}
-      - MONGO_DB_HOST=mongodb
-      - MONGO_DB_PORT=27017
-      - MONGO_DB_USER=admin
-      - MONGO_DB_PASSWORD=crapisecretpassword
-      - MONGO_DB_NAME=crapi
-      - SECRET_KEY=crapi
-      - API_GATEWAY_URL=https://api.mypremiumdealership.com
-      - TLS_ENABLED=${TLS_ENABLED:-false}
-      - TLS_CERTIFICATE=certs/server.crt
-      - TLS_KEY=certs/server.key
-      - FILES_LIMIT=1000
-      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-4}
-      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}
-      - GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-1000}
-      - GUNICORN_MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-50}
-      - DB_CONN_MAX_AGE=${DB_CONN_MAX_AGE:-600}
-    depends_on:
-      postgresdb:
-        condition: service_healthy
-      mongodb:
-        condition: service_healthy
-      crapi-identity:
-        condition: service_healthy
-      crapi-community:
-        condition: service_healthy
-    healthcheck:
-      test: /app/health.sh
-      interval: 15s
-      timeout: 15s
-      retries: 15
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
-
-  crapi-chatbot:
-    container_name: crapi-chatbot
-    build:
-      context: ../../services/chatbot
-      dockerfile: Dockerfile
-    image: crapi/crapi-chatbot:local
-    ports:
-      - "${LISTEN_IP:-127.0.0.1}:5500:5500"
-    environment:
-      - TLS_ENABLED=${TLS_ENABLED:-false}
-      - SERVER_PORT=${CHATBOT_SERVER_PORT:-5002}
-      - WEB_SERVICE=crapi-web
-      - IDENTITY_SERVICE=crapi-identity:${IDENTITY_SERVER_PORT:-8080}
-      - DB_NAME=crapi
-      - DB_USER=admin
-      - DB_PASSWORD=crapisecretpassword
-      - DB_HOST=postgresdb
-      - DB_PORT=5432
-      - MONGO_DB_HOST=mongodb
-      - MONGO_DB_PORT=27017
-      - MONGO_DB_USER=admin
-      - MONGO_DB_PASSWORD=crapisecretpassword
-      - MONGO_DB_NAME=crapi
-      - API_USER=admin@example.com
-      - API_PASSWORD=Admin!123
-      - OPENAPI_SPEC=/app/resources/crapi-openapi-spec.json
-      - CHATBOT_LIFE=${CHATBOT_LIFE:-1}
-      - CHATBOT_LLM_PROVIDER=${CHATBOT_LLM_PROVIDER:-openai}
-      - CHATBOT_LLM_MODEL=${CHATBOT_LLM_MODEL:-}
-      - CHATBOT_EMBEDDINGS_MODEL=${CHATBOT_EMBEDDINGS_MODEL:-}
-      - CHATBOT_EMBEDDINGS_DIMENSIONS=${CHATBOT_EMBEDDINGS_DIMENSIONS:-1536}
-      - CHATBOT_OPENAI_API_KEY=${CHATBOT_OPENAI_API_KEY:-}
-      - CHATBOT_OPENAI_BASE_URL=${CHATBOT_OPENAI_BASE_URL:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
-      - AZURE_AD_TOKEN=${AZURE_AD_TOKEN:-}
-      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
-      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-02-15-preview}
-      - AZURE_OPENAI_CHAT_DEPLOYMENT=${AZURE_OPENAI_CHAT_DEPLOYMENT:-}
-      - AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=${AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT:-}
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
-      - COHERE_API_KEY=${COHERE_API_KEY:-}
-      - AWS_BEARER_TOKEN_BEDROCK=${AWS_BEARER_TOKEN_BEDROCK:-}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
-      - AWS_REGION=${AWS_REGION:-}
-      - AWS_ASSUME_ROLE_ARN=${AWS_ASSUME_ROLE_ARN:-}
-      - AWS_EXTERNAL_ID=${AWS_EXTERNAL_ID:-}
-      - AWS_ROLE_SESSION_NAME=${AWS_ROLE_SESSION_NAME:-crapi-chatbot-session}
-      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
-      - VERTEX_PROJECT=${VERTEX_PROJECT:-}
-      - VERTEX_LOCATION=${VERTEX_LOCATION:-}
-      - MAX_CONTENT_LENGTH=50000
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      crapi-identity:
-        condition: service_healthy
-      chromadb:
-        condition: service_healthy
-
-  crapi-web:
-    container_name: crapi-web
-    build:
-      context: ../../services/web
-      dockerfile: Dockerfile
-    image: crapi/crapi-web:local
-    ports:
-      - "${LISTEN_IP:-127.0.0.1}:8888:80"
-      - "${LISTEN_IP:-127.0.0.1}:30080:80"
-      - "${LISTEN_IP:-127.0.0.1}:8443:443"
-      - "${LISTEN_IP:-127.0.0.1}:30443:443"
-    environment:
-      - COMMUNITY_SERVICE=crapi-community:${COMMUNITY_SERVER_PORT:-8087}
-      - IDENTITY_SERVICE=crapi-identity:${IDENTITY_SERVER_PORT:-8080}
-      - WORKSHOP_SERVICE=crapi-workshop:${WORKSHOP_SERVER_PORT:-8000}
-      - CHATBOT_SERVICE=crapi-chatbot:${CHATBOT_SERVER_PORT:-5002}
-      - MAILHOG_WEB_SERVICE=mailhog:8025
-      - TLS_ENABLED=${TLS_ENABLED:-false}
-    depends_on:
-      crapi-community:
-        condition: service_healthy
-      crapi-identity:
-        condition: service_healthy
-      crapi-workshop:
-        condition: service_healthy
-    healthcheck:
-      test: curl 0.0.0.0:80/health
-      interval: 15s
-      timeout: 15s
-      retries: 15
-    deploy:
-      resources:
-        limits:
-          cpus: '0.3'
-          memory: 128M
-
-  postgresdb:
-    container_name: postgresdb
-    image: 'postgres:14'
-    command: ["postgres", "-c", "max_connections=500"]
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: crapisecretpassword
-      POSTGRES_DB: crapi
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready" ]
-      interval: 15s
-      timeout: 15s
-      retries: 15
-    volumes:
-      - postgresql-data:/var/lib/postgresql/data/
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-
-  mongodb:
-    container_name: mongodb
-    image: 'mongo:4.4'
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: crapisecretpassword
-    healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongo mongodb:27017/test --quiet
-      interval: 15s
-      timeout: 15s
-      retries: 15
-      start_period: 20s
-    volumes:
-      - mongodb-data:/data/db
-    deploy:
-      resources:
-        limits:
-          cpus: '0.3'
-          memory: 128M
-
-  chromadb:
-    container_name: chromadb
-    image: 'chromadb/chroma:latest'
-    environment:
-      IS_PERSISTENT: 'TRUE'
-    healthcheck:
-      test: [ "CMD", "/bin/bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000" ]
-      interval: 15s
-      timeout: 15s
-      retries: 15
-      start_period: 20s
-    volumes:
-      - chromadb-data:/data
-
-  mailhog:
-    user: root
-    container_name: mailhog
-    build:
-      context: ../../services/mailhog
-      dockerfile: Dockerfile
-    image: crapi/mailhog:local
-    environment:
-      MH_MONGO_URI: admin:crapisecretpassword@mongodb:27017
-      MH_STORAGE: mongodb
-    ports:
-      - "${LISTEN_IP:-127.0.0.1}:8025:8025"
-    healthcheck:
-      test: [ "CMD", "nc", "-z", "localhost", "8025" ]
-      interval: 15s
-      timeout: 15s
-      retries: 15
-    deploy:
-      resources:
-        limits:
-          cpus: '0.3'
-          memory: 128M
-
-  api.mypremiumdealership.com:
-    container_name: api.mypremiumdealership.com
-    build:
-      context: ../../services/gateway-service
-      dockerfile: Dockerfile
-    image: crapi/gateway-service:local
-    healthcheck:
-      test: bash -c 'echo -n "GET / HTTP/1.1\n\n" > /dev/tcp/127.0.0.1/443'
-      interval: 15s
-      timeout: 15s
-      retries: 15
-      start_period: 15s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.1'
-          memory: 50M
-
-volumes:
-  mongodb-data:
-  postgresql-data:
-  chromadb-data:
-```
-
-Vous noterez que les modifications interviennent essentiellement sur les lignes :
-
-```yaml
-build:
-      context: ../../services/identity
-```
-
-Ces via ces lignes que nous indiquons à partir de quel dossier il faut build les images pour nos services !
-
-Nous pouvons relancer un build avec
-
-```bash
-$ docker compose -f deploy/docker/docker-compose.yml build
-```
-
-Et relancer la construction de nos containers
-
-```bash
-$ cd crAPI/deploy/docker
-$ docker compose up -d
-```
-
-Dans le prochain article nous allons voir comment intégrer de l’observabilité à notre application !
+Cette première étape nous permettra de poser les fondations nécessaires à la réalisation du `Threat Modeling`.
