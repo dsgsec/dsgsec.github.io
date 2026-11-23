@@ -1,5 +1,5 @@
 ---
-title: "Application Security Detection & Response 03 : Threat Modeling avec STRIDE"
+title: "Application Security Detection & Response 02 : Threat Modeling avec STRIDE"
 date: 2026-11-23
 categories: [purple, devsecops, appsec, detection]
 tags: [purple-team, devsecops, appsec, detection]
