@@ -1,5 +1,5 @@
 ---
-title: "Application Security Detection & Response 02 : Du Threat Modeling vers la détection"
+title: "Application Security Detection & Response 03 : Du Threat Modeling vers la détection"
 date: 2026-11-24
 categories: [purple, devsecops, appsec, detection]
 tags: [purple-team, devsecops, appsec, detection]
